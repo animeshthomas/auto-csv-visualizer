@@ -1,14 +1,17 @@
 import io
 import os
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from typing import Optional
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 import pandas as pd
 
 from backend.profiler import analyze_dataframe
+from backend.chatbot import process_chat_query
 
-app = FastAPI(title="Automated CSV Profiler & Visualizer", version="1.0.0")
+app = FastAPI(title="Automated CSV Profiler & Visualizer", version="1.1.0")
 
 # Enable CORS for local development & hosted frontends
 app.add_middleware(
@@ -21,6 +24,11 @@ app.add_middleware(
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+
+class ChatQueryRequest(BaseModel):
+    sample_id: Optional[str] = None
+    query: str
+    api_key: Optional[str] = None
 
 @app.get("/api/samples")
 def get_sample_list():
@@ -106,8 +114,34 @@ async def upload_csv(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {str(e)}")
 
+@app.post("/api/chat-query")
+def chat_query(req: ChatQueryRequest):
+    if not req.query or not req.query.strip():
+        raise HTTPException(status_code=400, detail="Query text cannot be empty")
+        
+    sample_id = req.sample_id or "sales_data"
+    allowed_samples = {
+        "sales_data": "sales_data.csv",
+        "housing_demographics": "housing_demographics.csv",
+        "customer_churn": "customer_churn.csv"
+    }
+    
+    file_name = allowed_samples.get(sample_id, "sales_data.csv")
+    file_path = os.path.join(DATA_DIR, file_name)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Dataset file not found")
+        
+    try:
+        df = pd.read_csv(file_path)
+        result = process_chat_query(df, req.query, req.api_key)
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error executing AI chat query: {str(e)}")
+
 # Serve static files from root directory
-app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
+if os.path.exists(DATA_DIR):
+    app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
 
 @app.get("/")
 def read_root():

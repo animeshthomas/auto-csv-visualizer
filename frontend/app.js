@@ -32,11 +32,37 @@ document.addEventListener('DOMContentLoaded', () => {
     const tableBody = document.getElementById('tableBody');
     const tableSearch = document.getElementById('tableSearch');
     const tableShowingCount = document.getElementById('tableShowingCount');
+
+    // Chatbot controls
+    const chatLog = document.getElementById('chatLog');
+    const chatInput = document.getElementById('chatInput');
+    const btnSendChat = document.getElementById('btnSendChat');
+    const geminiApiKeyInput = document.getElementById('geminiApiKey');
+    const btnSaveApiKey = document.getElementById('btnSaveApiKey');
+    const chatPromptPills = document.querySelectorAll('.chat-prompt-pill');
     
     let activeAnalysisData = null;
+    let activeRawRows = [];
     let chartInstance = null;
+    let currentSampleId = "sales_data";
 
-    // --- EVENT LISTENERS FOR FILE UPLOAD & SAMPLES ---
+    if (localStorage.getItem('gemini_api_key')) {
+        geminiApiKeyInput.value = localStorage.getItem('gemini_api_key');
+    }
+
+    if (btnSaveApiKey) {
+        btnSaveApiKey.addEventListener('click', () => {
+            const key = geminiApiKeyInput.value.trim();
+            if (key) {
+                localStorage.setItem('gemini_api_key', key);
+                alert("Gemini API Key saved locally!");
+            } else {
+                localStorage.removeItem('gemini_api_key');
+                alert("API Key cleared.");
+            }
+        });
+    }
+
     btnUploadTrigger.addEventListener('click', () => fileInput.click());
     dropzone.addEventListener('click', (e) => {
         if (e.target.classList.contains('sample-pill')) return;
@@ -45,11 +71,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     fileInput.addEventListener('change', (e) => {
         if (e.target.files.length > 0) {
-            handleFileUpload(e.target.files[0]);
+            processCSVFile(e.target.files[0]);
         }
     });
 
-    // Drag & Drop
     ['dragenter', 'dragover'].forEach(eventName => {
         dropzone.addEventListener(eventName, (e) => {
             e.preventDefault();
@@ -68,14 +93,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const dt = e.dataTransfer;
         const files = dt.files;
         if (files.length > 0) {
-            handleFileUpload(files[0]);
+            processCSVFile(files[0]);
         }
     });
 
-    // Sample Selectors
     sampleSelect.addEventListener('change', (e) => {
         if (e.target.value) {
-            fetchSampleData(e.target.value);
+            currentSampleId = e.target.value;
+            loadSampleDataset(e.target.value);
         }
     });
 
@@ -84,7 +109,8 @@ document.addEventListener('DOMContentLoaded', () => {
             e.stopPropagation();
             const sampleId = pill.dataset.sample;
             sampleSelect.value = sampleId;
-            fetchSampleData(sampleId);
+            currentSampleId = sampleId;
+            loadSampleDataset(sampleId);
         });
     });
 
@@ -95,7 +121,6 @@ document.addEventListener('DOMContentLoaded', () => {
         fileInput.value = '';
     });
 
-    // Tab Navigation
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             tabBtns.forEach(b => b.classList.remove('active'));
@@ -107,66 +132,458 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // --- API CALLS ---
-    function showLoading(text = "Analyzing CSV with Pandas...") {
-        uploadSection.classList.add('hidden');
-        analysisDashboard.classList.add('hidden');
-        loadingState.classList.remove('hidden');
-        document.getElementById('loadingText').textContent = text;
+    if (btnSendChat && chatInput) {
+        btnSendChat.addEventListener('click', handleChatSubmit);
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleChatSubmit();
+        });
+    }
+
+    chatPromptPills.forEach(pill => {
+        pill.addEventListener('click', () => {
+            chatInput.value = pill.textContent.trim();
+            handleChatSubmit();
+        });
+    });
+
+    function handleChatSubmit() {
+        const q = chatInput.value.trim();
+        if (!q) return;
+        chatInput.value = '';
+        sendChatMessage(q);
+    }
+
+    function showLoading(text = "Analyzing CSV dataset...") {
+        if (uploadSection) uploadSection.classList.add('hidden');
+        if (analysisDashboard) analysisDashboard.classList.add('hidden');
+        if (loadingState) loadingState.classList.remove('hidden');
+        const loadingText = document.getElementById('loadingText');
+        if (loadingText) loadingText.textContent = text;
     }
 
     function hideLoading() {
-        loadingState.classList.add('hidden');
+        if (loadingState) loadingState.classList.add('hidden');
     }
 
-    async function handleFileUpload(file) {
+    async function processCSVFile(file) {
         showLoading(`Parsing and analyzing ${file.name}...`);
-        const formData = new FormData();
-        formData.append('file', file);
 
         try {
-            const response = await fetch('/api/upload-csv', {
-                method: 'POST',
-                body: formData
-            });
-
-            if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.detail || 'Failed to analyze file');
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await fetch('/api/upload-csv', { method: 'POST', body: formData });
+            if (response.ok) {
+                const data = await response.json();
+                renderDashboard(data);
+                return;
             }
-
-            const data = await response.json();
-            renderDashboard(data);
-        } catch (error) {
-            alert(`Error: ${error.message}`);
-            hideLoading();
-            uploadSection.classList.remove('hidden');
+        } catch (apiErr) {
+            console.log("Backend API offline, running client-side engine.");
         }
+
+        const text = await file.text();
+        const analysis = clientSideProfileCSV(text, file.name);
+        renderDashboard(analysis);
     }
 
-    async function fetchSampleData(sampleId) {
+    async function loadSampleDataset(sampleId) {
         showLoading(`Loading sample dataset...`);
+
         try {
             const response = await fetch(`/api/sample-csv/${sampleId}`);
-            if (!response.ok) {
-                throw new Error('Failed to load sample dataset');
+            if (response.ok) {
+                const data = await response.json();
+                renderDashboard(data);
+                return;
             }
-            const data = await response.json();
-            renderDashboard(data);
-        } catch (error) {
-            alert(`Error: ${error.message}`);
-            hideLoading();
-            uploadSection.classList.remove('hidden');
+        } catch (apiErr) {
+            console.log("Backend API offline, fetching static sample file.");
         }
+
+        try {
+            const res = await fetch(`data/${sampleId}.csv`);
+            if (!res.ok) throw new Error("Sample file missing");
+            const text = await res.text();
+            const analysis = clientSideProfileCSV(text, `${sampleId}.csv`);
+            renderDashboard(analysis);
+        } catch (err) {
+            alert(`Could not load sample: ${err.message}`);
+            hideLoading();
+            if (uploadSection) uploadSection.classList.remove('hidden');
+        }
+    }
+
+    async function sendChatMessage(userQuery) {
+        appendMessage('user', userQuery);
+        const loadingMsgId = appendMessage('assistant', '🤖 *Thinking and analyzing dataset...*');
+        const apiKey = localStorage.getItem('gemini_api_key') || '';
+
+        try {
+            const response = await fetch('/api/chat-query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sample_id: currentSampleId,
+                    query: userQuery,
+                    api_key: apiKey
+                })
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                removeMessage(loadingMsgId);
+                renderAssistantResponse(result);
+                return;
+            }
+        } catch (err) {
+            console.log("Backend API offline, fallback to client-side smart chat parser.");
+        }
+
+        removeMessage(loadingMsgId);
+        const localResult = clientSideSmartQuery(userQuery);
+        renderAssistantResponse(localResult);
+    }
+
+    function appendMessage(role, text) {
+        const msgDiv = document.createElement('div');
+        const id = 'msg-' + Date.now();
+        msgDiv.id = id;
+        msgDiv.className = `chat-message ${role}`;
+        msgDiv.innerHTML = `
+            <div class="msg-avatar">${role === 'user' ? '👤' : '🤖'}</div>
+            <div class="msg-content"><p>${text}</p></div>
+        `;
+        chatLog.appendChild(msgDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+        return id;
+    }
+
+    function removeMessage(id) {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    }
+
+    function renderAssistantResponse(result) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'chat-message assistant';
+
+        let html = `<div class="msg-avatar">🤖</div><div class="msg-content"><p>${result.answer}</p>`;
+
+        if (result.result_type === 'table' && result.table_data && result.table_data.length > 0) {
+            const cols = Object.keys(result.table_data[0]);
+            html += `<div class="table-responsive" style="margin-top:10px;"><table class="preview-table"><thead><tr>`;
+            cols.forEach(c => html += `<th>${c}</th>`);
+            html += `</tr></thead><tbody>`;
+            result.table_data.forEach(row => {
+                html += `<tr>`;
+                cols.forEach(c => html += `<td>${row[c] !== null ? row[c] : 'null'}</td>`);
+                html += `</tr>`;
+            });
+            html += `</tbody></table></div>`;
+        }
+
+        if (result.code_used) {
+            html += `<div class="code-used-box"><code>${result.code_used}</code></div>`;
+        }
+
+        html += `</div>`;
+        msgDiv.innerHTML = html;
+        chatLog.appendChild(msgDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function clientSideSmartQuery(query) {
+        if (!activeRawRows || activeRawRows.length === 0) {
+            return { answer: "Please upload or select a dataset first!", result_type: "text" };
+        }
+
+        const q = query.toLowerCase().trim();
+        const cols = activeAnalysisData ? activeAnalysisData.columns_list : Object.keys(activeRawRows[0]);
+        const colsLower = cols.map(c => c.toLowerCase());
+
+        const topMatch = q.match(/top\s+(\d+)\s*(.*)/);
+        if (topMatch) {
+            const n = parseInt(topMatch[1]);
+            const remainder = topMatch[2];
+
+            let sortCol = cols.find((c, idx) => remainder.includes(colsLower[idx]) && typeof activeRawRows[0][c] === 'number');
+            let groupCol = cols.find((c, idx) => remainder.includes(colsLower[idx]) && typeof activeRawRows[0][c] !== 'number');
+
+            if (!sortCol) sortCol = cols.filter(c => typeof activeRawRows[0][c] === 'number').pop();
+            if (!groupCol) groupCol = cols.filter(c => typeof activeRawRows[0][c] !== 'number')[0];
+
+            if (groupCol && sortCol) {
+                const map = {};
+                activeRawRows.forEach(r => {
+                    const k = String(r[groupCol]);
+                    const v = Number(r[sortCol]) || 0;
+                    map[k] = (map[k] || 0) + v;
+                });
+                const sorted = Object.keys(map).sort((a, b) => map[b] - map[a]).slice(0, n);
+                const tableData = sorted.map(k => ({ [groupCol]: k, [`Total ${sortCol}`]: Number(map[k].toFixed(2)) }));
+
+                return {
+                    answer: `Here are the top ${n} \`${groupCol}\` entries by \`${sortCol}\`:`,
+                    result_type: "table",
+                    table_data: tableData,
+                    code_used: `activeRawRows.groupBy('${groupCol}').sum('${sortCol}').slice(0, ${n})`
+                };
+            }
+        }
+
+        if (q.includes('average') || q.includes('mean') || q.includes('avg')) {
+            const numCol = cols.find((c, idx) => q.includes(colsLower[idx]) && typeof activeRawRows[0][c] === 'number');
+            if (numCol) {
+                const vals = activeRawRows.map(r => r[numCol]).filter(v => typeof v === 'number');
+                const avg = (vals.reduce((a, b) => a + b, 0) / (vals.length || 1)).toFixed(2);
+                return {
+                    answer: `The average \`${numCol}\` is **${avg}**.`,
+                    result_type: "text",
+                    code_used: `activeRawRows.mean('${numCol}')`
+                };
+            }
+        }
+
+        if (q.includes('missing') || q.includes('null')) {
+            const ov = activeAnalysisData ? activeAnalysisData.overview : {};
+            return {
+                answer: `Dataset has **${ov.total_null_cells || 0} missing cells** (${ov.null_percentage || 0}% overall missing rate).`,
+                result_type: "text"
+            };
+        }
+
+        return {
+            answer: `I analyzed your dataset of **${activeRawRows.length} rows**. Available attributes: \`${cols.slice(0, 5).join(', ')}\`. Ask me for top values, averages, or missing stats!`,
+            result_type: "text"
+        };
+    }
+
+    function clientSideProfileCSV(csvText, filename) {
+        const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (lines.length === 0) return null;
+
+        const firstLine = lines[0];
+        const sep = (firstLine.includes('\t') && firstLine.split('\t').length > firstLine.split(',').length) ? '\t' : ',';
+
+        const headers = parseCSVRow(lines[0], sep);
+        const rows = [];
+        let totalNulls = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+            const vals = parseCSVRow(lines[i], sep);
+            if (vals.length === headers.length) {
+                const rowObj = {};
+                headers.forEach((h, idx) => {
+                    let v = vals[idx] ? vals[idx].trim() : '';
+                    if (v === '' || v === 'nan' || v === 'null') {
+                        rowObj[h] = null;
+                        totalNulls++;
+                    } else {
+                        const num = Number(v);
+                        rowObj[h] = !isNaN(num) ? num : v;
+                    }
+                });
+                rows.push(rowObj);
+            }
+        }
+
+        activeRawRows = rows;
+        const totalRows = rows.length;
+        const totalCols = headers.length;
+        const totalCells = totalRows * totalCols;
+        const nullPct = totalCells > 0 ? Number((totalNulls / totalCells * 100).toFixed(2)) : 0;
+
+        const numericCols = [];
+        const categoricalCols = [];
+
+        headers.forEach(h => {
+            const sampleVals = rows.map(r => r[h]).filter(v => v !== null);
+            const isNum = sampleVals.length > 0 && sampleVals.every(v => typeof v === 'number');
+            if (isNum) numericCols.push(h);
+            else categoricalCols.push(h);
+        });
+
+        const columnStats = {};
+
+        numericCols.forEach(col => {
+            const vals = rows.map(r => r[col]).filter(v => typeof v === 'number').sort((a, b) => a - b);
+            const n = vals.length;
+            const nullCnt = totalRows - n;
+            const nullRatio = Number((nullCnt / totalRows * 100).toFixed(2));
+
+            let min = 0, max = 0, mean = 0, median = 0, std = 0, q25 = 0, q75 = 0;
+            let outliersCnt = 0, lowerBound = 0, upperBound = 0;
+
+            if (n > 0) {
+                min = vals[0];
+                max = vals[n - 1];
+                const sum = vals.reduce((a, b) => a + b, 0);
+                mean = sum / n;
+                median = n % 2 === 0 ? (vals[n/2 - 1] + vals[n/2]) / 2 : vals[Math.floor(n/2)];
+                q25 = vals[Math.floor(n * 0.25)];
+                q75 = vals[Math.floor(n * 0.75)];
+                const iqr = q75 - q25;
+                lowerBound = q25 - 1.5 * iqr;
+                upperBound = q75 + 1.5 * iqr;
+                outliersCnt = vals.filter(v => v < lowerBound || v > upperBound).length;
+
+                const variance = vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (n > 1 ? n - 1 : 1);
+                std = Math.sqrt(variance);
+            }
+
+            const binCount = Math.min(12, Math.max(5, Math.floor(Math.sqrt(n))));
+            const binWidth = (max - min) / (binCount || 1);
+            const binLabels = [];
+            const frequencies = new Array(binCount).fill(0);
+
+            for (let i = 0; i < binCount; i++) {
+                const bMin = (min + i * binWidth).toFixed(1);
+                const bMax = (min + (i + 1) * binWidth).toFixed(1);
+                binLabels.push(`${bMin}-${bMax}`);
+            }
+
+            vals.forEach(v => {
+                let binIdx = Math.floor((v - min) / binWidth);
+                if (binIdx >= binCount) binIdx = binCount - 1;
+                if (binIdx < 0) binIdx = 0;
+                frequencies[binIdx]++;
+            });
+
+            columnStats[col] = {
+                type: 'numeric',
+                null_count: nullCnt,
+                null_pct: nullRatio,
+                unique_count: new Set(vals).size,
+                min: Number(min.toFixed(2)),
+                max: Number(max.toFixed(2)),
+                mean: Number(mean.toFixed(2)),
+                median: Number(median.toFixed(2)),
+                std: Number(std.toFixed(2)),
+                q25: Number(q25.toFixed(2)),
+                q75: Number(q75.toFixed(2)),
+                skewness: 0.1,
+                outliers: {
+                    count: outliersCnt,
+                    pct: Number((outliersCnt / (n || 1) * 100).toFixed(2)),
+                    lower_bound: Number(lowerBound.toFixed(2)),
+                    upper_bound: Number(upperBound.toFixed(2))
+                },
+                histogram: { bin_labels: binLabels, frequencies: frequencies }
+            };
+        });
+
+        categoricalCols.forEach(col => {
+            const vals = rows.map(r => r[col]).filter(v => v !== null).map(String);
+            const counts = {};
+            vals.forEach(v => counts[v] = (counts[v] || 0) + 1);
+            const sortedKeys = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 8);
+            
+            const topVals = sortedKeys.map(k => ({
+                label: k,
+                count: counts[k],
+                pct: Number((counts[k] / totalRows * 100).toFixed(1))
+            }));
+
+            columnStats[col] = {
+                type: 'categorical',
+                null_count: totalRows - vals.length,
+                null_pct: Number(((totalRows - vals.length) / totalRows * 100).toFixed(2)),
+                unique_count: Object.keys(counts).length,
+                top_values: topVals
+            };
+        });
+
+        const correlationMatrix = { columns: numericCols, matrix: [] };
+        if (numericCols.length >= 2) {
+            const matrix = [];
+            numericCols.forEach((col1) => {
+                const rowCorr = [];
+                numericCols.forEach((col2) => {
+                    if (col1 === col2) {
+                        rowCorr.push(1.0);
+                    } else {
+                        const corrVal = calculatePearson(rows, col1, col2);
+                        rowCorr.push(Number(corrVal.toFixed(3)));
+                    }
+                });
+                matrix.push(rowCorr);
+            });
+            correlationMatrix.matrix = matrix;
+        }
+
+        return {
+            dataset_name: filename,
+            overview: {
+                total_rows: totalRows,
+                total_columns: totalCols,
+                memory_bytes: csvText.length,
+                memory_formatted: `${(csvText.length / 1024).toFixed(1)} KB`,
+                total_null_cells: totalNulls,
+                null_percentage: nullPct,
+                duplicate_rows: 0,
+                duplicate_percentage: 0
+            },
+            columns_classification: {
+                numeric: numericCols,
+                categorical: categoricalCols,
+                datetime: [],
+                boolean: []
+            },
+            column_stats: columnStats,
+            correlation_matrix: correlationMatrix,
+            columns_list: headers,
+            preview_rows: rows.slice(0, 20)
+        };
+    }
+
+    function calculatePearson(rows, col1, col2) {
+        const validPairs = rows.filter(r => typeof r[col1] === 'number' && typeof r[col2] === 'number');
+        const n = validPairs.length;
+        if (n < 3) return 0;
+
+        const x = validPairs.map(r => r[col1]);
+        const y = validPairs.map(r => r[col2]);
+
+        const sumX = x.reduce((a, b) => a + b, 0);
+        const sumY = y.reduce((a, b) => a + b, 0);
+
+        const sumX2 = x.reduce((a, b) => a + b * b, 0);
+        const sumY2 = y.reduce((a, b) => a + b * b, 0);
+
+        const sumXY = x.reduce((a, b, i) => a + b * y[i], 0);
+
+        const num = (n * sumXY) - (sumX * sumY);
+        const den = Math.sqrt(((n * sumX2) - (sumX * sumX)) * ((n * sumY2) - (sumY * sumY)));
+
+        return den === 0 ? 0 : num / den;
+    }
+
+    function parseCSVRow(rowStr, sep = ',') {
+        const result = [];
+        let insideQuote = false;
+        let entry = '';
+        for (let i = 0; i < rowStr.length; i++) {
+            const char = rowStr[i];
+            if (char === '"') {
+                insideQuote = !insideQuote;
+            } else if (char === sep && !insideQuote) {
+                result.push(entry.replace(/^"|"$/g, ''));
+                entry = '';
+            } else {
+                entry += char;
+            }
+        }
+        result.push(entry.replace(/^"|"$/g, ''));
+        return result;
     }
 
     // --- DASHBOARD RENDERER ---
     function renderDashboard(data) {
         activeAnalysisData = data;
+        if (data.preview_rows) activeRawRows = data.preview_rows;
         hideLoading();
-        analysisDashboard.classList.remove('hidden');
+        if (analysisDashboard) analysisDashboard.classList.remove('hidden');
 
-        // Meta Banner & KPI
         activeDatasetName.textContent = data.dataset_name || 'dataset.csv';
         const ov = data.overview;
         kpiRows.textContent = ov.total_rows.toLocaleString();
@@ -175,16 +592,9 @@ document.addEventListener('DOMContentLoaded', () => {
         kpiNulls.textContent = `${ov.null_percentage}%`;
         kpiDuplicates.textContent = ov.duplicate_rows.toLocaleString();
 
-        // Populate Column Selector for Univariate Tab
         populateColumnSelector(data);
-
-        // Render Correlation Matrix
         renderCorrelationHeatmap(data.correlation_matrix);
-
-        // Render Outlier Diagnostics
         renderOutliersDiagnostics(data);
-
-        // Render Table Explorer
         renderTablePreview(data.preview_rows, data.columns_list);
     }
 
@@ -218,7 +628,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const stats = activeAnalysisData.column_stats[colName];
         colTypeBadge.textContent = stats.type.toUpperCase();
 
-        // Update Side Panel Stats
         updateSideStatsPanel(colName, stats);
 
         const ctx = document.getElementById('univariateChart').getContext('2d');
@@ -227,7 +636,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (stats.type === 'numeric') {
-            // Histogram
             const hist = stats.histogram;
             chartInstance = new Chart(ctx, {
                 type: 'bar',
@@ -245,9 +653,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {
-                        legend: { labels: { color: '#9CA3AF' } }
-                    },
+                    plugins: { legend: { labels: { color: '#9CA3AF' } } },
                     scales: {
                         x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.05)' } },
                         y: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }
@@ -255,7 +661,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         } else {
-            // Categorical Top Values Bar Chart
             const topVals = stats.top_values || [];
             chartInstance = new Chart(ctx, {
                 type: 'bar',
@@ -274,9 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     responsive: true,
                     maintainAspectRatio: false,
                     indexAxis: 'y',
-                    plugins: {
-                        legend: { labels: { color: '#9CA3AF' } }
-                    },
+                    plugins: { legend: { labels: { color: '#9CA3AF' } } },
                     scales: {
                         x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.05)' } },
                         y: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.05)' } }
@@ -299,7 +702,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 { label: 'Mean (Average)', value: stats.mean },
                 { label: 'Median (Q50)', value: stats.median },
                 { label: 'Std Deviation', value: stats.std },
-                { label: 'Skewness', value: stats.skewness },
                 { label: 'IQR Outliers', value: `${stats.outliers.count} (${stats.outliers.pct}%)` }
             ];
             items.forEach(it => {
@@ -340,10 +742,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const table = document.createElement('table');
         table.className = 'heatmap-table';
 
-        // Header Row
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        headerRow.appendChild(document.createElement('th')); // Empty top-left cell
+        headerRow.appendChild(document.createElement('th'));
         corrData.columns.forEach(col => {
             const th = document.createElement('th');
             th.textContent = col;
@@ -352,7 +753,6 @@ document.addEventListener('DOMContentLoaded', () => {
         thead.appendChild(headerRow);
         table.appendChild(thead);
 
-        // Body Rows
         const tbody = document.createElement('tbody');
         corrData.columns.forEach((rowCol, rIdx) => {
             const tr = document.createElement('tr');
@@ -390,7 +790,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- TAB 3: OUTLIER & HEALTH DIAGNOSTICS ---
+    // --- TAB 3: OUTLIERS & HEALTH DIAGNOSTICS ---
     function renderOutliersDiagnostics(data) {
         const listContainer = document.getElementById('outliersList');
         const boxplotMetricsContainer = document.getElementById('boxplotMetricsContainer');
@@ -409,7 +809,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const outCount = stats.outliers.count;
             const hasOutliers = outCount > 0;
 
-            // Outlier Summary Card Item
             const div = document.createElement('div');
             div.className = `outlier-card-item ${hasOutliers ? 'has-outliers' : ''}`;
             div.innerHTML = `
@@ -424,7 +823,6 @@ document.addEventListener('DOMContentLoaded', () => {
             listContainer.appendChild(div);
         });
 
-        // First Numeric Column Boxplot Stat Breakdown
         const firstNumCol = numericCols[0];
         const fStats = data.column_stats[firstNumCol];
         const boxStats = [
@@ -451,7 +849,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!rows || rows.length === 0) return;
 
-        // Head
         const trH = document.createElement('tr');
         columns.forEach(col => {
             const th = document.createElement('th');
@@ -460,10 +857,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         tableHead.appendChild(trH);
 
-        // Render rows
         renderTableRows(rows, columns);
 
-        // Table Search Filter
         tableSearch.oninput = (e) => {
             const query = e.target.value.toLowerCase().trim();
             const filtered = rows.filter(r => {

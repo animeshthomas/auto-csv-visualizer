@@ -32,9 +32,37 @@ document.addEventListener('DOMContentLoaded', () => {
     const tableBody = document.getElementById('tableBody');
     const tableSearch = document.getElementById('tableSearch');
     const tableShowingCount = document.getElementById('tableShowingCount');
+
+    // Chatbot controls
+    const chatLog = document.getElementById('chatLog');
+    const chatInput = document.getElementById('chatInput');
+    const btnSendChat = document.getElementById('btnSendChat');
+    const geminiApiKeyInput = document.getElementById('geminiApiKey');
+    const btnSaveApiKey = document.getElementById('btnSaveApiKey');
+    const chatPromptPills = document.querySelectorAll('.chat-prompt-pill');
     
     let activeAnalysisData = null;
+    let activeRawRows = [];
     let chartInstance = null;
+    let currentSampleId = "sales_data";
+
+    // Load saved API Key from localStorage
+    if (localStorage.getItem('gemini_api_key')) {
+        geminiApiKeyInput.value = localStorage.getItem('gemini_api_key');
+    }
+
+    if (btnSaveApiKey) {
+        btnSaveApiKey.addEventListener('click', () => {
+            const key = geminiApiKeyInput.value.trim();
+            if (key) {
+                localStorage.setItem('gemini_api_key', key);
+                alert("Gemini API Key saved locally!");
+            } else {
+                localStorage.removeItem('gemini_api_key');
+                alert("API Key cleared.");
+            }
+        });
+    }
 
     // --- EVENT LISTENERS ---
     btnUploadTrigger.addEventListener('click', () => fileInput.click());
@@ -75,6 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sample Selectors
     sampleSelect.addEventListener('change', (e) => {
         if (e.target.value) {
+            currentSampleId = e.target.value;
             loadSampleDataset(e.target.value);
         }
     });
@@ -84,6 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
             e.stopPropagation();
             const sampleId = pill.dataset.sample;
             sampleSelect.value = sampleId;
+            currentSampleId = sampleId;
             loadSampleDataset(sampleId);
         });
     });
@@ -107,6 +137,28 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Chatbot Event Listeners
+    if (btnSendChat && chatInput) {
+        btnSendChat.addEventListener('click', handleChatSubmit);
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleChatSubmit();
+        });
+    }
+
+    chatPromptPills.forEach(pill => {
+        pill.addEventListener('click', () => {
+            chatInput.value = pill.textContent.trim();
+            handleChatSubmit();
+        });
+    });
+
+    function handleChatSubmit() {
+        const q = chatInput.value.trim();
+        if (!q) return;
+        chatInput.value = '';
+        sendChatMessage(q);
+    }
+
     // --- CSV PARSING & DUAL ENGINE LOGIC ---
     function showLoading(text = "Analyzing CSV dataset...") {
         if (uploadSection) uploadSection.classList.add('hidden');
@@ -117,13 +169,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function hideLoading() {
-        loadingState.classList.add('hidden');
+        if (loadingState) loadingState.classList.add('hidden');
     }
 
     async function processCSVFile(file) {
         showLoading(`Parsing and analyzing ${file.name}...`);
 
-        // Try Python API backend first
         try {
             const formData = new FormData();
             formData.append('file', file);
@@ -137,7 +188,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log("Backend API offline, running client-side engine.");
         }
 
-        // Fallback to Client-Side Engine for GitHub Pages
         const text = await file.text();
         const analysis = clientSideProfileCSV(text, file.name);
         renderDashboard(analysis);
@@ -146,7 +196,6 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadSampleDataset(sampleId) {
         showLoading(`Loading sample dataset...`);
 
-        // Try Python API backend first
         try {
             const response = await fetch(`/api/sample-csv/${sampleId}`);
             if (response.ok) {
@@ -158,7 +207,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log("Backend API offline, fetching static sample file.");
         }
 
-        // Static file fallback for GitHub Pages
         try {
             const res = await fetch(`data/${sampleId}.csv`);
             if (!res.ok) throw new Error("Sample file missing");
@@ -168,16 +216,170 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             alert(`Could not load sample: ${err.message}`);
             hideLoading();
-            uploadSection.classList.remove('hidden');
+            if (uploadSection) uploadSection.classList.remove('hidden');
         }
     }
 
-    // --- CLIENT-SIDE PROFILING ENGINE (FOR GITHUB PAGES) ---
+    // --- AI CHATBOT ENGINE ---
+    async function sendChatMessage(userQuery) {
+        // Append User Message
+        appendMessage('user', userQuery);
+
+        // Show typing indicator
+        const loadingMsgId = appendMessage('assistant', '🤖 *Thinking and analyzing dataset...*');
+
+        const apiKey = localStorage.getItem('gemini_api_key') || '';
+
+        // 1. Try Backend API
+        try {
+            const response = await fetch('/api/chat-query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sample_id: currentSampleId,
+                    query: userQuery,
+                    api_key: apiKey
+                })
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                removeMessage(loadingMsgId);
+                renderAssistantResponse(result);
+                return;
+            }
+        } catch (err) {
+            console.log("Backend API offline, fallback to client-side smart chat parser.");
+        }
+
+        // 2. Client-Side Fallback Engine (for GitHub Pages static hosting)
+        removeMessage(loadingMsgId);
+        const localResult = clientSideSmartQuery(userQuery);
+        renderAssistantResponse(localResult);
+    }
+
+    function appendMessage(role, text) {
+        const msgDiv = document.createElement('div');
+        const id = 'msg-' + Date.now();
+        msgDiv.id = id;
+        msgDiv.className = `chat-message ${role}`;
+        msgDiv.innerHTML = `
+            <div class="msg-avatar">${role === 'user' ? '👤' : '🤖'}</div>
+            <div class="msg-content"><p>${text}</p></div>
+        `;
+        chatLog.appendChild(msgDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+        return id;
+    }
+
+    function removeMessage(id) {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    }
+
+    function renderAssistantResponse(result) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'chat-message assistant';
+
+        let html = `<div class="msg-avatar">🤖</div><div class="msg-content"><p>${result.answer}</p>`;
+
+        if (result.result_type === 'table' && result.table_data && result.table_data.length > 0) {
+            const cols = Object.keys(result.table_data[0]);
+            html += `<div class="table-responsive" style="margin-top:10px;"><table class="preview-table"><thead><tr>`;
+            cols.forEach(c => html += `<th>${c}</th>`);
+            html += `</tr></thead><tbody>`;
+            result.table_data.forEach(row => {
+                html += `<tr>`;
+                cols.forEach(c => html += `<td>${row[c] !== null ? row[c] : 'null'}</td>`);
+                html += `</tr>`;
+            });
+            html += `</tbody></table></div>`;
+        }
+
+        if (result.code_used) {
+            html += `<div class="code-used-box"><code>${result.code_used}</code></div>`;
+        }
+
+        html += `</div>`;
+        msgDiv.innerHTML = html;
+        chatLog.appendChild(msgDiv);
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function clientSideSmartQuery(query) {
+        if (!activeRawRows || activeRawRows.length === 0) {
+            return { answer: "Please upload or select a dataset first!", result_type: "text" };
+        }
+
+        const q = query.toLowerCase().trim();
+        const cols = activeAnalysisData ? activeAnalysisData.columns_list : Object.keys(activeRawRows[0]);
+        const colsLower = cols.map(c => c.toLowerCase());
+
+        // Top N query
+        const topMatch = q.match(/top\s+(\d+)\s*(.*)/);
+        if (topMatch) {
+            const n = parseInt(topMatch[1]);
+            const remainder = topMatch[2];
+
+            let sortCol = cols.find((c, idx) => remainder.includes(colsLower[idx]) && typeof activeRawRows[0][c] === 'number');
+            let groupCol = cols.find((c, idx) => remainder.includes(colsLower[idx]) && typeof activeRawRows[0][c] !== 'number');
+
+            if (!sortCol) sortCol = cols.filter(c => typeof activeRawRows[0][c] === 'number').pop();
+            if (!groupCol) groupCol = cols.filter(c => typeof activeRawRows[0][c] !== 'number')[0];
+
+            if (groupCol && sortCol) {
+                const map = {};
+                activeRawRows.forEach(r => {
+                    const k = String(r[groupCol]);
+                    const v = Number(r[sortCol]) || 0;
+                    map[k] = (map[k] || 0) + v;
+                });
+                const sorted = Object.keys(map).sort((a, b) => map[b] - map[a]).slice(0, n);
+                const tableData = sorted.map(k => ({ [groupCol]: k, [`Total ${sortCol}`]: Number(map[k].toFixed(2)) }));
+
+                return {
+                    answer: `Here are the top ${n} \`${groupCol}\` entries by \`${sortCol}\`:`,
+                    result_type: "table",
+                    table_data: tableData,
+                    code_used: `activeRawRows.groupBy('${groupCol}').sum('${sortCol}').slice(0, ${n})`
+                };
+            }
+        }
+
+        // Average query
+        if (q.includes('average') || q.includes('mean') || q.includes('avg')) {
+            const numCol = cols.find((c, idx) => q.includes(colsLower[idx]) && typeof activeRawRows[0][c] === 'number');
+            if (numCol) {
+                const vals = activeRawRows.map(r => r[numCol]).filter(v => typeof v === 'number');
+                const avg = (vals.reduce((a, b) => a + b, 0) / (vals.length || 1)).toFixed(2);
+                return {
+                    answer: `The average \`${numCol}\` is **${avg}**.`,
+                    result_type: "text",
+                    code_used: `activeRawRows.mean('${numCol}')`
+                };
+            }
+        }
+
+        // Missing values query
+        if (q.includes('missing') || q.includes('null')) {
+            const ov = activeAnalysisData ? activeAnalysisData.overview : {};
+            return {
+                answer: `Dataset has **${ov.total_null_cells || 0} missing cells** (${ov.null_percentage || 0}% overall missing rate).`,
+                result_type: "text"
+            };
+        }
+
+        return {
+            answer: `I analyzed your dataset of **${activeRawRows.length} rows**. Available attributes: \`${cols.slice(0, 5).join(', ')}\`. Ask me for top values, averages, or missing stats!`,
+            result_type: "text"
+        };
+    }
+
+    // --- CLIENT-SIDE PROFILING ENGINE ---
     function clientSideProfileCSV(csvText, filename) {
         const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
         if (lines.length === 0) return null;
 
-        // Detect delimiter
         const firstLine = lines[0];
         const sep = (firstLine.includes('\t') && firstLine.split('\t').length > firstLine.split(',').length) ? '\t' : ',';
 
@@ -203,12 +405,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        activeRawRows = rows;
         const totalRows = rows.length;
         const totalCols = headers.length;
         const totalCells = totalRows * totalCols;
         const nullPct = totalCells > 0 ? Number((totalNulls / totalCells * 100).toFixed(2)) : 0;
 
-        // Classify Columns
         const numericCols = [];
         const categoricalCols = [];
 
@@ -219,7 +421,6 @@ document.addEventListener('DOMContentLoaded', () => {
             else categoricalCols.push(h);
         });
 
-        // Column Stats Calculation
         const columnStats = {};
 
         numericCols.forEach(col => {
@@ -228,7 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const nullCnt = totalRows - n;
             const nullRatio = Number((nullCnt / totalRows * 100).toFixed(2));
 
-            let min = 0, max = 0, mean = 0, median = 0, std = 0, q25 = 0, q75 = 0, skew = 0;
+            let min = 0, max = 0, mean = 0, median = 0, std = 0, q25 = 0, q75 = 0;
             let outliersCnt = 0, lowerBound = 0, upperBound = 0;
 
             if (n > 0) {
@@ -248,7 +449,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 std = Math.sqrt(variance);
             }
 
-            // Histogram calculation
             const binCount = Math.min(12, Math.max(5, Math.floor(Math.sqrt(n))));
             const binWidth = (max - min) / (binCount || 1);
             const binLabels = [];
@@ -311,7 +511,6 @@ document.addEventListener('DOMContentLoaded', () => {
             };
         });
 
-        // Correlation Matrix Calculation
         const correlationMatrix = { columns: numericCols, matrix: [] };
         if (numericCols.length >= 2) {
             const matrix = [];
@@ -399,10 +598,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- DASHBOARD RENDERER ---
     function renderDashboard(data) {
         activeAnalysisData = data;
+        if (data.preview_rows) activeRawRows = data.preview_rows;
         hideLoading();
-        analysisDashboard.classList.remove('hidden');
+        if (analysisDashboard) analysisDashboard.classList.remove('hidden');
 
-        // Meta Banner & KPI
         activeDatasetName.textContent = data.dataset_name || 'dataset.csv';
         const ov = data.overview;
         kpiRows.textContent = ov.total_rows.toLocaleString();
@@ -411,16 +610,9 @@ document.addEventListener('DOMContentLoaded', () => {
         kpiNulls.textContent = `${ov.null_percentage}%`;
         kpiDuplicates.textContent = ov.duplicate_rows.toLocaleString();
 
-        // Populate Column Selector for Univariate Tab
         populateColumnSelector(data);
-
-        // Render Correlation Matrix
         renderCorrelationHeatmap(data.correlation_matrix);
-
-        // Render Outlier Diagnostics
         renderOutliersDiagnostics(data);
-
-        // Render Table Explorer
         renderTablePreview(data.preview_rows, data.columns_list);
     }
 
@@ -454,7 +646,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const stats = activeAnalysisData.column_stats[colName];
         colTypeBadge.textContent = stats.type.toUpperCase();
 
-        // Update Side Panel Stats
         updateSideStatsPanel(colName, stats);
 
         const ctx = document.getElementById('univariateChart').getContext('2d');
@@ -569,7 +760,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const table = document.createElement('table');
         table.className = 'heatmap-table';
 
-        // Header Row
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
         headerRow.appendChild(document.createElement('th'));
@@ -581,7 +771,6 @@ document.addEventListener('DOMContentLoaded', () => {
         thead.appendChild(headerRow);
         table.appendChild(thead);
 
-        // Body Rows
         const tbody = document.createElement('tbody');
         corrData.columns.forEach((rowCol, rIdx) => {
             const tr = document.createElement('tr');
