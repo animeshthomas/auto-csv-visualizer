@@ -109,10 +109,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- CSV PARSING & DUAL ENGINE LOGIC ---
     function showLoading(text = "Analyzing CSV dataset...") {
-        uploadSection.classList.add('hidden');
-        analysisDashboard.classList.add('hidden');
-        loadingState.classList.remove('hidden');
-        document.getElementById('loadingText').textContent = text;
+        if (uploadSection) uploadSection.classList.add('hidden');
+        if (analysisDashboard) analysisDashboard.classList.add('hidden');
+        if (loadingState) loadingState.classList.remove('hidden');
+        const loadingText = document.getElementById('loadingText');
+        if (loadingText) loadingText.textContent = text;
     }
 
     function hideLoading() {
@@ -697,8 +698,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderTableRows(rows, columns) {
+        if (!tableBody) return;
         tableBody.innerHTML = '';
-        tableShowingCount.textContent = `${rows.length} rows`;
+        if (tableShowingCount) tableShowingCount.textContent = `${rows.length} rows`;
 
         rows.forEach(row => {
             const tr = document.createElement('tr');

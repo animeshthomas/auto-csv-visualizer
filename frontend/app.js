@@ -474,8 +474,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderTableRows(rows, columns) {
+        if (!tableBody) return;
         tableBody.innerHTML = '';
-        tableShowingCount.textContent = rows.length;
+        if (tableShowingCount) tableShowingCount.textContent = `${rows.length} rows`;
 
         rows.forEach(row => {
             const tr = document.createElement('tr');
