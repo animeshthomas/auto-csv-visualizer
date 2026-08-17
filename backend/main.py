@@ -10,7 +10,7 @@ from backend.profiler import analyze_dataframe
 
 app = FastAPI(title="Automated CSV Profiler & Visualizer", version="1.0.0")
 
-# Enable CORS for local development
+# Enable CORS for local development & hosted frontends
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,7 +21,6 @@ app.add_middleware(
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
 @app.get("/api/samples")
 def get_sample_list():
@@ -80,10 +79,8 @@ async def upload_csv(file: UploadFile = File(...)):
         
     try:
         contents = await file.read()
-        # Try multiple encodings
         for encoding in ['utf-8', 'latin-1', 'cp1252']:
             try:
-                # Try sniffing delimiter
                 sample_str = contents[:4096].decode(encoding, errors='ignore')
                 sep = ','
                 if '\t' in sample_str and sample_str.count('\t') > sample_str.count(','):
@@ -109,13 +106,19 @@ async def upload_csv(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process CSV file: {str(e)}")
 
-# Serve frontend static files
-if os.path.exists(FRONTEND_DIR):
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+# Serve static files from root directory
+app.mount("/data", StaticFiles(directory=DATA_DIR), name="data")
 
 @app.get("/")
 def read_root():
-    index_file = os.path.join(FRONTEND_DIR, "index.html")
+    index_file = os.path.join(BASE_DIR, "index.html")
     if os.path.exists(index_file):
         return FileResponse(index_file)
-    return {"message": "CSV Profiler API is running. Frontend static files not found."}
+    return {"message": "CSV Profiler API is running."}
+
+@app.get("/{filename}")
+def read_static(filename: str):
+    file_path = os.path.join(BASE_DIR, filename)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="File not found")
