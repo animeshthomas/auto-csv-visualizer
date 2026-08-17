@@ -10,6 +10,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
     <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Leaflet.js CDN for Geo Mapping -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -170,6 +173,10 @@
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
                         🤖 Ask Your CSV (AI Chatbot)
                     </button>
+                    <button class="tab-btn highlight-geo-tab" data-tab="tabGeoMap">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+                        🗺️ Geo Map Visualizer
+                    </button>
                 </div>
 
                 <!-- Tab Content Sections -->
@@ -309,6 +316,23 @@
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                             </button>
                         </div>
+                    </div>
+                </div>
+
+                <!-- TAB 6: Geo Map Visualizer -->
+                <div id="tabGeoMap" class="tab-content">
+                    <div class="card map-card-wrapper">
+                        <div class="panel-header map-header-bar">
+                            <div>
+                                <h3>🗺️ Interactive Geographic Map</h3>
+                                <p class="subtitle" id="geoMapSubtitle">Auto-detecting latitude and longitude coordinates...</p>
+                            </div>
+                            <div class="map-controls">
+                                <label for="mapMetricSelect" class="dropdown-label">Color Metric:</label>
+                                <select id="mapMetricSelect" class="form-select"></select>
+                            </div>
+                        </div>
+                        <div id="geoMap" class="geo-map-container"></div>
                     </div>
                 </div>
 

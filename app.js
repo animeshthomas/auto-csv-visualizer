@@ -40,13 +40,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const geminiApiKeyInput = document.getElementById('geminiApiKey');
     const btnSaveApiKey = document.getElementById('btnSaveApiKey');
     const chatPromptPills = document.querySelectorAll('.chat-prompt-pill');
+
+    // Geo Map controls
+    const geoMapSubtitle = document.getElementById('geoMapSubtitle');
+    const mapMetricSelect = document.getElementById('mapMetricSelect');
     
     let activeAnalysisData = null;
     let activeRawRows = [];
     let chartInstance = null;
+    let leafletMap = null;
+    let mapMarkersLayer = null;
     let currentSampleId = "sales_data";
 
-    // Load saved API Key from localStorage
     if (localStorage.getItem('gemini_api_key')) {
         geminiApiKeyInput.value = localStorage.getItem('gemini_api_key');
     }
@@ -64,7 +69,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- EVENT LISTENERS ---
     btnUploadTrigger.addEventListener('click', () => fileInput.click());
     dropzone.addEventListener('click', (e) => {
         if (e.target.classList.contains('sample-pill')) return;
@@ -77,7 +81,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Drag & Drop
     ['dragenter', 'dragover'].forEach(eventName => {
         dropzone.addEventListener(eventName, (e) => {
             e.preventDefault();
@@ -100,7 +103,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Sample Selectors
     sampleSelect.addEventListener('change', (e) => {
         if (e.target.value) {
             currentSampleId = e.target.value;
@@ -125,7 +127,6 @@ document.addEventListener('DOMContentLoaded', () => {
         fileInput.value = '';
     });
 
-    // Tab Navigation
     tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             tabBtns.forEach(b => b.classList.remove('active'));
@@ -134,10 +135,13 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('active');
             const targetTab = document.getElementById(btn.dataset.tab);
             if (targetTab) targetTab.classList.add('active');
+
+            if (btn.dataset.tab === 'tabGeoMap' && leafletMap) {
+                setTimeout(() => leafletMap.invalidateSize(), 200);
+            }
         });
     });
 
-    // Chatbot Event Listeners
     if (btnSendChat && chatInput) {
         btnSendChat.addEventListener('click', handleChatSubmit);
         chatInput.addEventListener('keydown', (e) => {
@@ -159,7 +163,6 @@ document.addEventListener('DOMContentLoaded', () => {
         sendChatMessage(q);
     }
 
-    // --- CSV PARSING & DUAL ENGINE LOGIC ---
     function showLoading(text = "Analyzing CSV dataset...") {
         if (uploadSection) uploadSection.classList.add('hidden');
         if (analysisDashboard) analysisDashboard.classList.add('hidden');
@@ -222,15 +225,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- AI CHATBOT ENGINE ---
     async function sendChatMessage(userQuery) {
-        // Append User Message
         appendMessage('user', userQuery);
-
-        // Show typing indicator
         const loadingMsgId = appendMessage('assistant', '🤖 *Thinking and analyzing dataset...*');
-
         const apiKey = localStorage.getItem('gemini_api_key') || '';
 
-        // 1. Try Backend API
         try {
             const response = await fetch('/api/chat-query', {
                 method: 'POST',
@@ -252,7 +250,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log("Backend API offline, fallback to client-side smart chat parser.");
         }
 
-        // 2. Client-Side Fallback Engine (for GitHub Pages static hosting)
         removeMessage(loadingMsgId);
         const localResult = clientSideSmartQuery(userQuery);
         renderAssistantResponse(localResult);
@@ -327,7 +324,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const cols = activeAnalysisData ? activeAnalysisData.columns_list : Object.keys(activeRawRows[0]);
         const colsLower = cols.map(c => c.toLowerCase());
 
-        // Top N query
         const topMatch = q.match(/top\s+(\d+)\s*(.*)/);
         if (topMatch) {
             const n = parseInt(topMatch[1]);
@@ -358,7 +354,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Average query
         if (q.includes('average') || q.includes('mean') || q.includes('avg')) {
             const numCol = cols.find((c, idx) => q.includes(colsLower[idx]) && typeof activeRawRows[0][c] === 'number');
             if (numCol) {
@@ -372,7 +367,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Missing values query
         if (q.includes('missing') || q.includes('null')) {
             const ov = activeAnalysisData ? activeAnalysisData.overview : {};
             return {
@@ -385,6 +379,89 @@ document.addEventListener('DOMContentLoaded', () => {
             answer: `I analyzed your dataset of **${activeRawRows.length} rows**. Available attributes: \`${cols.slice(0, 5).join(', ')}\`. Ask me for top values, averages, or missing stats!`,
             result_type: "text"
         };
+    }
+
+    // --- LEAFLET.JS GEO MAP ENGINE ---
+    function renderGeoMap(data, rows) {
+        if (!rows || rows.length === 0) return;
+
+        const cols = data.columns_list || Object.keys(rows[0]);
+        const colsLower = cols.map(c => c.toLowerCase());
+
+        const latCol = cols.find((c, idx) => ['latitude', 'lat', 'lat_deg', 'y'].includes(colsLower[idx]));
+        const lngCol = cols.find((c, idx) => ['longitude', 'lng', 'lon', 'x'].includes(colsLower[idx]));
+
+        if (!latCol || !lngCol) {
+            geoMapSubtitle.textContent = "No latitude/longitude coordinate columns detected in this dataset.";
+            return;
+        }
+
+        geoMapSubtitle.textContent = `Plotting coordinate points using '${latCol}' and '${lngCol}'...`;
+
+        // Populate metric selector
+        mapMetricSelect.innerHTML = '';
+        const numCols = data.columns_classification.numeric || cols.filter(c => typeof rows[0][c] === 'number');
+        numCols.forEach(nc => {
+            const opt = document.createElement('option');
+            opt.value = nc;
+            opt.textContent = nc;
+            mapMetricSelect.appendChild(opt);
+        });
+
+        // Initialize Map
+        if (!leafletMap) {
+            leafletMap = L.map('geoMap').setView([20, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 18,
+                attribution: '© OpenStreetMap'
+            }).addTo(leafletMap);
+            mapMarkersLayer = L.layerGroup().addTo(leafletMap);
+        }
+
+        drawMapMarkers(latCol, lngCol, mapMetricSelect.value, rows);
+
+        mapMetricSelect.onchange = () => {
+            drawMapMarkers(latCol, lngCol, mapMetricSelect.value, rows);
+        };
+    }
+
+    function drawMapMarkers(latCol, lngCol, metricCol, rows) {
+        if (!mapMarkersLayer) return;
+        mapMarkersLayer.clearLayers();
+
+        const bounds = [];
+        let plotCount = 0;
+
+        rows.forEach(r => {
+            const lat = parseFloat(r[latCol]);
+            const lng = parseFloat(r[lngCol]);
+
+            if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                bounds.push([lat, lng]);
+                plotCount++;
+
+                const val = r[metricCol] !== undefined ? r[metricCol] : 'N/A';
+                let popupHtml = `<b>Geo Point Details</b><br>Latitude: ${lat}<br>Longitude: ${lng}`;
+                if (metricCol) popupHtml += `<br><b>${metricCol}:</b> ${val}`;
+
+                const marker = L.circleMarker([lat, lng], {
+                    radius: 7,
+                    fillColor: '#10B981',
+                    color: '#059669',
+                    weight: 1.5,
+                    fillOpacity: 0.75
+                }).bindPopup(popupHtml);
+
+                mapMarkersLayer.addLayer(marker);
+            }
+        });
+
+        geoMapSubtitle.textContent = `Plotted ${plotCount.toLocaleString()} map points (${latCol}, ${lngCol})`;
+
+        if (bounds.length > 0 && leafletMap) {
+            leafletMap.fitBounds(bounds, { padding: [30, 30] });
+            setTimeout(() => leafletMap.invalidateSize(), 250);
+        }
     }
 
     // --- CLIENT-SIDE PROFILING ENGINE ---
@@ -626,6 +703,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCorrelationHeatmap(data.correlation_matrix);
         renderOutliersDiagnostics(data);
         renderTablePreview(data.preview_rows, data.columns_list);
+        renderGeoMap(data, activeRawRows);
     }
 
     // --- TAB 1: UNIVARIATE ANALYSIS ---

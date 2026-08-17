@@ -40,10 +40,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const geminiApiKeyInput = document.getElementById('geminiApiKey');
     const btnSaveApiKey = document.getElementById('btnSaveApiKey');
     const chatPromptPills = document.querySelectorAll('.chat-prompt-pill');
+
+    // Geo Map controls
+    const geoMapSubtitle = document.getElementById('geoMapSubtitle');
+    const mapMetricSelect = document.getElementById('mapMetricSelect');
     
     let activeAnalysisData = null;
     let activeRawRows = [];
     let chartInstance = null;
+    let leafletMap = null;
+    let mapMarkersLayer = null;
     let currentSampleId = "sales_data";
 
     if (localStorage.getItem('gemini_api_key')) {
@@ -129,6 +135,10 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('active');
             const targetTab = document.getElementById(btn.dataset.tab);
             if (targetTab) targetTab.classList.add('active');
+
+            if (btn.dataset.tab === 'tabGeoMap' && leafletMap) {
+                setTimeout(() => leafletMap.invalidateSize(), 200);
+            }
         });
     });
 
@@ -213,6 +223,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // --- AI CHATBOT ENGINE ---
     async function sendChatMessage(userQuery) {
         appendMessage('user', userQuery);
         const loadingMsgId = appendMessage('assistant', '🤖 *Thinking and analyzing dataset...*');
@@ -370,6 +381,88 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
+    // --- LEAFLET.JS GEO MAP ENGINE ---
+    function renderGeoMap(data, rows) {
+        if (!rows || rows.length === 0) return;
+
+        const cols = data.columns_list || Object.keys(rows[0]);
+        const colsLower = cols.map(c => c.toLowerCase());
+
+        const latCol = cols.find((c, idx) => ['latitude', 'lat', 'lat_deg', 'y'].includes(colsLower[idx]));
+        const lngCol = cols.find((c, idx) => ['longitude', 'lng', 'lon', 'x'].includes(colsLower[idx]));
+
+        if (!latCol || !lngCol) {
+            geoMapSubtitle.textContent = "No latitude/longitude coordinate columns detected in this dataset.";
+            return;
+        }
+
+        geoMapSubtitle.textContent = `Plotting coordinate points using '${latCol}' and '${lngCol}'...`;
+
+        mapMetricSelect.innerHTML = '';
+        const numCols = data.columns_classification.numeric || cols.filter(c => typeof rows[0][c] === 'number');
+        numCols.forEach(nc => {
+            const opt = document.createElement('option');
+            opt.value = nc;
+            opt.textContent = nc;
+            mapMetricSelect.appendChild(opt);
+        });
+
+        if (!leafletMap) {
+            leafletMap = L.map('geoMap').setView([20, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 18,
+                attribution: '© OpenStreetMap'
+            }).addTo(leafletMap);
+            mapMarkersLayer = L.layerGroup().addTo(leafletMap);
+        }
+
+        drawMapMarkers(latCol, lngCol, mapMetricSelect.value, rows);
+
+        mapMetricSelect.onchange = () => {
+            drawMapMarkers(latCol, lngCol, mapMetricSelect.value, rows);
+        };
+    }
+
+    function drawMapMarkers(latCol, lngCol, metricCol, rows) {
+        if (!mapMarkersLayer) return;
+        mapMarkersLayer.clearLayers();
+
+        const bounds = [];
+        let plotCount = 0;
+
+        rows.forEach(r => {
+            const lat = parseFloat(r[latCol]);
+            const lng = parseFloat(r[lngCol]);
+
+            if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                bounds.push([lat, lng]);
+                plotCount++;
+
+                const val = r[metricCol] !== undefined ? r[metricCol] : 'N/A';
+                let popupHtml = `<b>Geo Point Details</b><br>Latitude: ${lat}<br>Longitude: ${lng}`;
+                if (metricCol) popupHtml += `<br><b>${metricCol}:</b> ${val}`;
+
+                const marker = L.circleMarker([lat, lng], {
+                    radius: 7,
+                    fillColor: '#10B981',
+                    color: '#059669',
+                    weight: 1.5,
+                    fillOpacity: 0.75
+                }).bindPopup(popupHtml);
+
+                mapMarkersLayer.addLayer(marker);
+            }
+        });
+
+        geoMapSubtitle.textContent = `Plotted ${plotCount.toLocaleString()} map points (${latCol}, ${lngCol})`;
+
+        if (bounds.length > 0 && leafletMap) {
+            leafletMap.fitBounds(bounds, { padding: [30, 30] });
+            setTimeout(() => leafletMap.invalidateSize(), 250);
+        }
+    }
+
+    // --- CLIENT-SIDE PROFILING ENGINE ---
     function clientSideProfileCSV(csvText, filename) {
         const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
         if (lines.length === 0) return null;
@@ -608,6 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCorrelationHeatmap(data.correlation_matrix);
         renderOutliersDiagnostics(data);
         renderTablePreview(data.preview_rows, data.columns_list);
+        renderGeoMap(data, activeRawRows);
     }
 
     // --- TAB 1: UNIVARIATE ANALYSIS ---

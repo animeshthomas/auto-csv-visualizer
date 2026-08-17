@@ -8,13 +8,23 @@ def generate_datasets():
     
     np.random.seed(42)
 
-    # 1. Sales Performance Dataset (1,000 rows)
+    # 1. Sales Performance Dataset (1,000 rows) with Geo Coordinates
     n_sales = 1000
-    regions = ['North America', 'Europe', 'Asia Pacific', 'Latin America', 'Middle East']
+    region_coords = {
+        'North America': (37.7749, -122.4194),
+        'Europe': (48.8566, 2.3522),
+        'Asia Pacific': (35.6762, 139.6503),
+        'Latin America': (-23.5505, -46.6333),
+        'Middle East': (25.2048, 55.2708)
+    }
+    
     products = ['Cloud Analytics', 'Enterprise ERP', 'Security Suite', 'AI CoPilot', 'Data Connector']
     categories = ['Software', 'Subscription', 'Services']
-    
     dates = pd.date_range(start='2024-01-01', periods=n_sales, freq='12h')
+    
+    chosen_regions = np.random.choice(list(region_coords.keys()), size=n_sales, p=[0.35, 0.25, 0.20, 0.12, 0.08])
+    lats = [region_coords[r][0] + np.random.uniform(-4.0, 4.0) for r in chosen_regions]
+    lngs = [region_coords[r][1] + np.random.uniform(-4.0, 4.0) for r in chosen_regions]
     
     units = np.random.randint(1, 50, size=n_sales)
     unit_price = np.random.uniform(50, 1200, size=n_sales).round(2)
@@ -26,7 +36,9 @@ def generate_datasets():
     
     sales_df = pd.DataFrame({
         'Date': dates.strftime('%Y-%m-%d'),
-        'Region': np.random.choice(regions, size=n_sales, p=[0.35, 0.25, 0.20, 0.12, 0.08]),
+        'Region': chosen_regions,
+        'Latitude': np.round(lats, 4),
+        'Longitude': np.round(lngs, 4),
         'Product': np.random.choice(products, size=n_sales),
         'Category': np.random.choice(categories, size=n_sales, p=[0.5, 0.35, 0.15]),
         'Units_Sold': units,
@@ -37,7 +49,6 @@ def generate_datasets():
         'Customer_Rating': customer_rating
     })
     
-    # Add a few NaN values to simulate realistic messy data
     sales_df.loc[np.random.choice(n_sales, 25, replace=False), 'Discount_Pct'] = np.nan
     sales_df.loc[np.random.choice(n_sales, 15, replace=False), 'Customer_Rating'] = np.nan
 
@@ -45,8 +56,11 @@ def generate_datasets():
     sales_df.to_csv(sales_path, index=False)
     print(f"Generated: {sales_path} ({len(sales_df)} rows)")
 
-    # 2. Housing & Demographics Dataset (800 rows)
+    # 2. Housing & Demographics Dataset (800 rows) with California Geo Coordinates
     n_house = 800
+    ca_lats = np.random.uniform(32.7, 37.8, size=n_house).round(4)
+    ca_lngs = np.random.uniform(-122.5, -117.2, size=n_house).round(4)
+    
     med_income = np.random.gamma(shape=3.0, scale=2.0, size=n_house).round(2) + 1.5
     house_age = np.random.randint(1, 55, size=n_house)
     avg_rooms = (med_income * 0.8 + np.random.normal(2, 0.8, size=n_house)).clip(1.5, 12).round(1)
@@ -57,6 +71,8 @@ def generate_datasets():
     med_house_val = (med_income * 45000 - dist_city_km * 1800 + house_age * 500 + np.random.normal(20000, 15000, size=n_house)).clip(75000, 500000).round(0)
 
     housing_df = pd.DataFrame({
+        'Latitude': ca_lats,
+        'Longitude': ca_lngs,
         'Median_Income_kUSD': med_income,
         'House_Age_Years': house_age,
         'Avg_Rooms': avg_rooms,
@@ -82,7 +98,6 @@ def generate_datasets():
     total_charges = (tenure_months * monthly_charges + np.random.normal(0, 50, size=n_churn)).clip(18, 9000).round(2)
     tech_support_calls = np.random.poisson(lam=1.8, size=n_churn).clip(0, 9)
     
-    # Calculate realistic churn risk logic
     churn_prob = (
         (contract_type == 'Month-to-month') * 0.35 +
         (internet_service == 'Fiber optic') * 0.15 +

@@ -445,6 +445,17 @@ body {
     background: rgba(6, 182, 212, 0.12);
 }
 
+.tab-btn.highlight-geo-tab {
+    background: rgba(16, 185, 129, 0.08);
+    border-radius: 8px 8px 0 0;
+    color: var(--accent-emerald);
+}
+
+.tab-btn.highlight-geo-tab.active {
+    border-bottom-color: var(--accent-emerald);
+    background: rgba(16, 185, 129, 0.15);
+}
+
 /* Tab Contents */
 .tab-content {
     display: none;
@@ -916,6 +927,39 @@ body {
 
 .chat-input-field:focus {
     border-color: var(--accent-indigo);
+}
+
+/* TAB 6: Geo Map Styles */
+.geo-map-container {
+    height: 520px;
+    width: 100%;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-card);
+    overflow: hidden;
+    z-index: 1;
+}
+
+.leaflet-tile {
+    filter: brightness(0.7) invert(1) contrast(1.2) hue-rotate(200deg);
+}
+
+.leaflet-popup-content-wrapper {
+    background: var(--bg-card-solid) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-body);
+    font-size: 0.82rem;
+}
+
+.leaflet-popup-tip {
+    background: var(--bg-card-solid) !important;
+}
+
+.map-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .hidden {
