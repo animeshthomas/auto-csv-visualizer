@@ -277,11 +277,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (el) el.remove();
     }
 
+    function parseSimpleMarkdown(text) {
+        if (!text) return '';
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+            .replace(/`(.*?)`/g, "<code>$1</code>")
+            .replace(/\n/g, "<br>");
+    }
+
     function renderAssistantResponse(result) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'chat-message assistant';
 
-        let html = `<div class="msg-avatar">🤖</div><div class="msg-content"><p>${result.answer}</p>`;
+        const formattedAnswer = parseSimpleMarkdown(result.answer);
+        let html = `<div class="msg-avatar">🤖</div><div class="msg-content"><p>${formattedAnswer}</p>`;
 
         if (result.result_type === 'table' && result.table_data && result.table_data.length > 0) {
             const cols = Object.keys(result.table_data[0]);
